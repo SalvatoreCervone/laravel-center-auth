@@ -86,6 +86,35 @@ class ServerAuthService
     }
 
     /**
+     * Sign an arbitrary data array into a short-lived RS256 JWT (useful for
+     * custom server-to-server APIs such as roles/permissions endpoints).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function signPayload(array $data, ?string $audience = null, int $ttl = 60): string
+    {
+        $issuer = $this->getIssuer();
+        $privateKey = $this->keyLoader->loadPrivateKey();
+        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
+        $now = time();
+
+        $payload = [
+            'iss' => $issuer,
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + max(5, $ttl),
+            'jti' => (string) Str::uuid(),
+            'data' => $data,
+        ];
+
+        if ($audience !== null && trim($audience) !== '') {
+            $payload['aud'] = trim($audience);
+        }
+
+        return JWT::encode($payload, $privateKey, $algorithm);
+    }
+
+    /**
      * Build the full callback URL for the given client and authorization code.
      */
     public function buildRedirectUrl(string $clientId, string $code): string

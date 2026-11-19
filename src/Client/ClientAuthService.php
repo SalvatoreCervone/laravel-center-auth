@@ -152,6 +152,46 @@ class ClientAuthService
     }
 
     /**
+     * Verify and decode a JWT created by ServerAuthService::signPayload(),
+     * checking signature, expiration, issuer, and (if present or required) audience.
+     *
+     * @return array<string, mixed>
+     */
+    public function decodePayload(string $jwt, bool $requireAudience = false): array
+    {
+        $publicKey = $this->keyLoader->loadPublicKey();
+        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
+
+        try {
+            $decoded = JWT::decode($jwt, new Key($publicKey, $algorithm));
+        } catch (Throwable $e) {
+            throw new InvalidTokenException('Invalid or expired JWT: ' . $e->getMessage(), 0, $e);
+        }
+
+        $claims = json_decode(json_encode($decoded, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+
+        $expectedIssuer = rtrim((string) config('center-auth.client.server_url', ''), '/');
+        $actualIssuer = rtrim((string) ($claims['iss'] ?? ''), '/');
+
+        if ($expectedIssuer !== '' && ($actualIssuer === '' || ! hash_equals($expectedIssuer, $actualIssuer))) {
+            throw new InvalidTokenException('JWT issuer (iss) does not match configured server_url.');
+        }
+
+        $actualAudience = isset($claims['aud']) ? (string) $claims['aud'] : '';
+        $expectedClientId = (string) config('center-auth.client.client_id', '');
+
+        if ($requireAudience && $actualAudience === '') {
+            throw new InvalidTokenException('JWT audience (aud) is missing.');
+        }
+
+        if ($actualAudience !== '' && ($expectedClientId === '' || ! hash_equals($expectedClientId, $actualAudience))) {
+            throw new InvalidTokenException('JWT audience (aud) does not match this client.');
+        }
+
+        return is_array($claims['data'] ?? null) ? $claims['data'] : $claims;
+    }
+
+    /**
      * Resolve/sync the local user, invoke beforeLogin hook, authenticate the session,
      * and regenerate the session ID to prevent session fixation.
      */

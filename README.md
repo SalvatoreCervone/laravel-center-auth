@@ -261,6 +261,52 @@ Eventi emessi:
 - `CenterAuth\Events\UserAuthenticated`
 - `CenterAuth\Events\AuthenticationFailed`
 
+### API personalizzate firmate in RS256 (`signPayload` / `decodePayload`)
+
+Se vuoi esporre una tua API su **Server** (es. protetta da `auth:sanctum`) che restituisce ruoli o altri dati dentro un JWT firmato `RS256`:
+
+**Lato Server (Controller API):**
+```php
+use CenterAuth\Facades\CenterAuth;
+use Illuminate\Http\Request;
+
+public function permissions(Request $request, int $userId)
+{
+    $user = \App\Models\User::findOrFail($userId);
+
+    $jwt = CenterAuth::server()->signPayload(
+        data: [
+            'roles' => $user->getRoleNames()->values()->all(),
+            'permissions' => $user->getAllPermissions()->pluck('name')->values()->all(),
+        ],
+        audience: $request->query('client_id'), // es. "app-alpha"
+        ttl: 60,
+    );
+
+    return response()->json(['jwt' => $jwt]);
+}
+```
+
+**Lato Client (es. dentro `CenterAuth::beforeLoginUsing`):**
+```php
+$response = Http::withToken(config('services.auth_server.token'))
+    ->withOptions(['verify' => config('center-auth.client.verify_ssl')])
+    ->acceptJson()
+    ->get(config('center-auth.client.server_api_url') . '/api/permessi/' . $payload->sub, [
+        'client_id' => config('center-auth.client.client_id'),
+    ]);
+
+if ($response->failed()) {
+    return false;
+}
+
+// Verifica firma RS256, exp, iss e aud; lancia InvalidTokenException se non valido
+$data = CenterAuth::client()->decodePayload($response->json('jwt'), requireAudience: true);
+
+Session::put('roles', $data['roles'] ?? []);
+Session::put('permissions', $data['permissions'] ?? []);
+```
+
 ---
 
 ## Test
