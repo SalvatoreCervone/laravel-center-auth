@@ -1,0 +1,50 @@
+{
+    "name": "center-auth/laravel-center-auth",
+    "description": "Lightweight OAuth-style SSO authentication component (server & client) for Laravel using single-use authorization codes and RS256 JWTs.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "sso",
+        "jwt",
+        "oauth",
+        "authentication",
+        "rs256"
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-openssl": "*",
+        "firebase/php-jwt": "^6.0|^7.0",
+        "illuminate/auth": "^10.0|^11.0|^12.0",
+        "illuminate/cache": "^10.0|^11.0|^12.0",
+        "illuminate/console": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "phpunit/phpunit": "^10.5|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "CenterAuth\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CenterAuth\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "CenterAuth\\CenterAuthServiceProvider"
+            ],
+            "aliases": {
+                "CenterAuth": "CenterAuth\\Facades\\CenterAuth"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
