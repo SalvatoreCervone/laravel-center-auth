@@ -27,7 +27,9 @@
 CENTER_AUTH_CLIENT_ID={{ session('generated_client_id') }}
 CENTER_AUTH_CLIENT_SECRET={{ session('generated_secret') }}
 CENTER_AUTH_SERVER_URL={{ $issuer }}
-CENTER_AUTH_FALLBACK_URL={{ $issuer }}</pre>
+CENTER_AUTH_SERVER_API_URL={{ $issuer }}
+CENTER_AUTH_FALLBACK_URL={{ $issuer }}
+# CENTER_AUTH_VERIFY_SSL=false</pre>
         </div>
     @endif
 

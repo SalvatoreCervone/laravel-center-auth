@@ -196,15 +196,28 @@ GET /center-auth/callback
 
 ---
 
-## Estensibilità (pronto per ruoli e permessi)
+## Estensibilità (ruoli, permessi e hook applicativi)
 
-Nel `AppServiceProvider::boot()` puoi agganciare logica applicativa senza modificare il package:
+Nel `AppServiceProvider::boot()` puoi agganciare la logica della tua app senza modificare il package:
+
+### Proprietà disponibili su `AuthPayload`
+- `$payload->sub`: ID utente sul Server
+- `$payload->email`, `$payload->name`: dati utente
+- `$payload->page`: path di destinazione sanificato (es. `/inizio`)
+- `$payload->userData`: array dei dati utente personalizzati via `resolveUserClaimsUsing`
+- `$payload->claim('chiave')`: legge eventuali claim custom nel JWT
+
+### Esempi
 
 ```php
 use CenterAuth\Data\AuthPayload;
+use CenterAuth\Events\UserAuthenticated;
 use CenterAuth\Facades\CenterAuth;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Session;
 
-// Lato SERVER: personalizza i claim utente nel JWT
+// 1. Lato SERVER: personalizza i claim utente nel JWT (es. aggiungi api_token o ruoli)
 CenterAuth::resolveUserClaimsUsing(function ($user, string $clientId): array {
     return [
         'id' => $user->getAuthIdentifier(),
@@ -213,15 +226,32 @@ CenterAuth::resolveUserClaimsUsing(function ($user, string $clientId): array {
     ];
 });
 
-// Lato CLIENT: controlla permessi/ruoli prima di completare il login
+// 2. Lato CLIENT: chiama la tua API permessi (con Bearer token) e blocca il login se non autorizzato
 CenterAuth::beforeLoginUsing(function ($user, AuthPayload $payload, $request): bool {
-    // Ritorna false per bloccare il login e reindirizzare a fallback_url
+    $response = Http::withToken(config('services.auth_server.token'))
+        ->withOptions(['verify' => config('center-auth.client.verify_ssl')])
+        ->acceptJson()
+        ->get(config('center-auth.client.server_api_url') . '/api/permessi/' . $payload->sub);
+
+    if ($response->failed()) {
+        return false; // blocca il login e rimanda a fallback_url
+    }
+
+    $permessi = $response->json();
+    Session::put('permissions', $permessi);
+
+    // Ritorna false per negare l'accesso, true per completare il login
     return true;
 });
 
-// Lato CLIENT: personalizza la risoluzione/creazione dell'utente locale
+// 3. Lato CLIENT: personalizza la risoluzione/creazione dell'utente locale
 CenterAuth::resolveUserUsing(function (AuthPayload $payload) {
     return \App\Models\User::where('email', $payload->email)->firstOrFail();
+});
+
+// 4. Lato CLIENT: esegui azioni dopo il login (quando l'utente è già autenticato e la sessione rigenerata)
+Event::listen(UserAuthenticated::class, function (UserAuthenticated $event): void {
+    // Disponibili: $event->user, $event->payload, $event->request
 });
 ```
 
