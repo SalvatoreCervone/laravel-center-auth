@@ -17,23 +17,15 @@ Un unico package configurabile in modalità **`server`** (portale centrale), **`
 
 ---
 
-## Installazione (repository locale)
+## Installazione
 
-Nel `composer.json` dell'app Laravel (server e/o client):
+Installa il package tramite Composer nell'app Laravel (sia Server che Client):
 
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../laravel-center-auth"
-        }
-    ],
-    "require": {
-        "center-auth/laravel-center-auth": "*"
-    }
-}
+```bash
+composer require center-auth/laravel-center-auth
 ```
+
+*(Se non è ancora pubblicato su Packagist e lo installi da repository Git privato o cartella locale, aggiungi il blocco `repositories` nel `composer.json` del progetto prima di eseguire `composer require`.)*
 
 Pubblica il file di configurazione:
 
