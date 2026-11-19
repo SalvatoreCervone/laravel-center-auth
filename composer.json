@@ -1,5 +1,5 @@
 {
-    "name": "center-auth/laravel-center-auth",
+    "name": "salvatorecervone/laravel-center-auth",
     "description": "Lightweight OAuth-style SSO authentication component (server & client) for Laravel using single-use authorization codes and RS256 JWTs.",
     "type": "library",
     "license": "MIT",
