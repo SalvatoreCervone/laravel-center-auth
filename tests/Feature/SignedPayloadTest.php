@@ -2,6 +2,7 @@
 
 namespace CenterAuth\Tests\Feature;
 
+use CenterAuth\Exceptions\InvalidConfigurationException;
 use CenterAuth\Exceptions\InvalidTokenException;
 use CenterAuth\Facades\CenterAuth;
 use CenterAuth\Tests\TestCase;
@@ -76,5 +77,55 @@ class SignedPayloadTest extends TestCase
         $this->expectException(InvalidTokenException::class);
 
         CenterAuth::client()->decodePayload($jwt);
+    }
+
+    public function test_decode_payload_throws_when_server_url_is_empty(): void
+    {
+        $jwt = CenterAuth::server()->signPayload([
+            'roles' => ['admin'],
+        ], audience: 'app-alpha');
+
+        config()->set('center-auth.client.server_url', '');
+
+        $this->expectException(InvalidConfigurationException::class);
+
+        CenterAuth::client()->decodePayload($jwt);
+    }
+
+    public function test_decode_payload_rejects_sso_login_jwt_without_data_claim(): void
+    {
+        $ssoJwt = JWT::encode([
+            'iss' => 'https://auth.test',
+            'sub' => '1',
+            'aud' => 'app-alpha',
+            'iat' => time(),
+            'exp' => time() + 60,
+            'jti' => 'jti-sso',
+            'page' => '/dashboard',
+            'user' => ['id' => 1, 'name' => 'Mario', 'email' => 'mario@example.com'],
+        ], self::$testPrivateKey, 'RS256');
+
+        $this->expectException(InvalidTokenException::class);
+
+        CenterAuth::client()->decodePayload($ssoJwt);
+    }
+
+    public function test_decode_payload_rejects_jwt_with_both_data_and_user_claims(): void
+    {
+        $hybridJwt = JWT::encode([
+            'iss' => 'https://auth.test',
+            'sub' => '1',
+            'aud' => 'app-alpha',
+            'iat' => time(),
+            'exp' => time() + 60,
+            'jti' => 'jti-hybrid',
+            'page' => '/dashboard',
+            'user' => ['id' => 1, 'name' => 'Mario', 'email' => 'mario@example.com'],
+            'data' => ['roles' => ['admin']],
+        ], self::$testPrivateKey, 'RS256');
+
+        $this->expectException(InvalidTokenException::class);
+
+        CenterAuth::client()->decodePayload($hybridJwt);
     }
 }

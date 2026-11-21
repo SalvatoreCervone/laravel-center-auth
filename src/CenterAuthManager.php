@@ -9,6 +9,7 @@ use Closure;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Symfony\Component\HttpFoundation\Response;
 
 class CenterAuthManager
@@ -121,11 +122,16 @@ class CenterAuthManager
 
     public function canAccessPanel(Request $request): bool
     {
-        if ($this->panelAuthorizer === null) {
-            return true;
+        if ($this->panelAuthorizer !== null) {
+            return (bool) ($this->panelAuthorizer)($request);
         }
 
-        return (bool) ($this->panelAuthorizer)($request);
+        $gate = config('center-auth.server.panel.gate');
+        if (is_string($gate) && trim($gate) !== '') {
+            return Gate::forUser($request->user())->allows(trim($gate));
+        }
+
+        return method_exists($this->app, 'environment') && (bool) $this->app->environment('local');
     }
 
     /**

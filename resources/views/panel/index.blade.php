@@ -83,7 +83,7 @@ CENTER_AUTH_FALLBACK_URL={{ $issuer }}
                                 <td>
                                     <code>{{ $client->client_id }}</code>
                                     <div class="muted" style="margin-top:0.2rem;">
-                                        <code>/{{ $routePrefix }}/redirect/{{ $client->client_id }}</code>
+                                        <code>{{ route('center-auth.server.redirect', $client->client_id, false) }}</code>
                                     </div>
                                 </td>
                                 <td><code>{{ $client->callback_url }}</code></td>
@@ -110,7 +110,8 @@ CENTER_AUTH_FALLBACK_URL={{ $issuer }}
                                         <a href="{{ route('center-auth.panel.clients.edit', $client) }}" class="btn btn-sm">Modifica</a>
 
                                         <form method="POST" action="{{ route('center-auth.panel.clients.destroy', $client) }}"
-                                              onsubmit="return confirm('Eliminare definitivamente l\'applicazione {{ addslashes($client->name) }}?');">
+                                              data-confirm="Eliminare definitivamente l'applicazione {{ $client->name }}?"
+                                              onsubmit="return confirm(this.dataset.confirm);">
                                             @csrf
                                             @method('DELETE')
                                             <button type="submit" class="btn btn-sm btn-danger">Elimina</button>

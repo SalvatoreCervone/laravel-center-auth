@@ -3,6 +3,7 @@
 namespace CenterAuth\Server\Http\Controllers;
 
 use CenterAuth\Models\CenterAuthClient;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -14,10 +15,14 @@ class ClientPanelController extends Controller
 {
     public function index(): View
     {
-        $clients = CenterAuthClient::query()
-            ->orderByDesc('is_active')
-            ->orderBy('name')
-            ->get();
+        try {
+            $clients = CenterAuthClient::query()
+                ->orderByDesc('is_active')
+                ->orderBy('name')
+                ->get();
+        } catch (QueryException) {
+            $clients = collect();
+        }
 
         return view('center-auth::panel.index', [
             'clients' => $clients,

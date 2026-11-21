@@ -78,6 +78,7 @@ return [
             'enabled' => filter_var(env('CENTER_AUTH_PANEL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
             'prefix' => env('CENTER_AUTH_PANEL_PREFIX', 'center-auth/admin'),
             'middleware' => ['web', 'auth'],
+            'gate' => env('CENTER_AUTH_PANEL_GATE'),
             'secret_rotation_grace_hours' => (int) env('CENTER_AUTH_SECRET_GRACE_HOURS', 24),
         ],
 

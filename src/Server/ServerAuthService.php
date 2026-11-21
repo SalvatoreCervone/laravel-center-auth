@@ -14,6 +14,7 @@ use CenterAuth\Support\KeyLoader;
 use CenterAuth\Support\PathSanitizer;
 use Firebase\JWT\JWT;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -22,7 +23,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ServerAuthService
 {
-    private const RESERVED_CLAIMS = ['iss', 'sub', 'aud', 'iat', 'nbf', 'exp', 'jti'];
+    private const RESERVED_CLAIMS = ['iss', 'sub', 'aud', 'iat', 'nbf', 'exp', 'jti', 'data', 'user', 'page'];
 
     public function __construct(
         private readonly KeyLoader $keyLoader,
@@ -32,8 +33,8 @@ class ServerAuthService
     }
 
     /**
-     * Issue a signed JWT, store it behind a single-use authorization code in cache,
-     * and return the code.
+     * Prepare a JWT payload, store it behind a single-use authorization code in cache,
+     * and return the code. The JWT is signed at exchange time so jwt_ttl starts on /exchange.
      *
      * @param  array<string, mixed>  $extraClaims
      */
@@ -46,35 +47,27 @@ class ServerAuthService
         $this->resolveActiveClient($clientId);
 
         $issuer = $this->getIssuer();
-        $privateKey = $this->keyLoader->loadPrivateKey();
-        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
-        $jwtTtl = max(5, (int) config('center-auth.server.jwt_ttl', 60));
+        $this->keyLoader->loadPrivateKey();
         $codeTtl = max(5, (int) config('center-auth.server.code_ttl', 60));
 
         $sanitizedPage = PathSanitizer::sanitize($targetPage, '/');
-        $now = time();
 
         $safeExtraClaims = array_diff_key($extraClaims, array_flip(self::RESERVED_CLAIMS));
 
-        $payload = array_merge($safeExtraClaims, [
+        $payloadTemplate = array_merge($safeExtraClaims, [
             'iss' => $issuer,
             'sub' => (string) $user->getAuthIdentifier(),
             'aud' => $clientId,
-            'iat' => $now,
-            'nbf' => $now,
-            'exp' => $now + $jwtTtl,
-            'jti' => (string) Str::uuid(),
             'page' => $sanitizedPage,
             'user' => $this->manager->resolveUserClaims($user, $clientId),
         ]);
 
-        $jwt = JWT::encode($payload, $privateKey, $algorithm);
         $code = bin2hex(random_bytes(32));
 
         $this->cache()->put(
             $this->cacheKey($code),
             [
-                'jwt' => $jwt,
+                'payload' => $payloadTemplate,
                 'client_id' => $clientId,
             ],
             $codeTtl
@@ -164,9 +157,13 @@ class ServerAuthService
             throw new CodeExchangeException('Authorization code is required.');
         }
 
-        $record = $this->cache()->pull($this->cacheKey($code));
+        $record = $this->pullCodeRecord($this->cacheKey($code));
 
-        if (! is_array($record) || ! isset($record['jwt'], $record['client_id'])) {
+        if (
+            ! is_array($record)
+            || ! isset($record['client_id'])
+            || (! is_array($record['payload'] ?? null) && ! is_string($record['jwt'] ?? null))
+        ) {
             throw new CodeExchangeException('Authorization code is invalid or expired.');
         }
 
@@ -174,11 +171,51 @@ class ServerAuthService
             throw new InvalidClientException('Authorization code was not issued for this client.');
         }
 
+        if (is_array($record['payload'] ?? null)) {
+            $privateKey = $this->keyLoader->loadPrivateKey();
+            $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
+            $jwtTtl = max(5, (int) config('center-auth.server.jwt_ttl', 60));
+            $now = now()->getTimestamp();
+
+            $payload = array_merge($record['payload'], [
+                'iat' => $now,
+                'nbf' => $now,
+                'exp' => $now + $jwtTtl,
+                'jti' => (string) Str::uuid(),
+            ]);
+
+            $jwt = JWT::encode($payload, $privateKey, $algorithm);
+        } else {
+            $jwt = (string) $record['jwt'];
+        }
+
         $this->clients->touchLastUsed($clientId);
 
         CodeExchanged::dispatch($clientId);
 
-        return (string) $record['jwt'];
+        return $jwt;
+    }
+
+    private function pullCodeRecord(string $cacheKey): mixed
+    {
+        $cache = $this->cache();
+        $store = method_exists($cache, 'getStore') ? $cache->getStore() : null;
+
+        if ($store instanceof LockProvider) {
+            $lock = $store->lock($cacheKey . ':lock', 5);
+
+            if (! $lock->get()) {
+                throw new CodeExchangeException('Authorization code is invalid or expired.');
+            }
+
+            try {
+                return $cache->pull($cacheKey);
+            } finally {
+                $lock->release();
+            }
+        }
+
+        return $cache->pull($cacheKey);
     }
 
     private function resolveActiveClient(string $clientId): ClientData

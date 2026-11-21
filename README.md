@@ -9,10 +9,10 @@ Un unico package configurabile in modalità **`server`** (portale centrale), **`
 ## Flusso di autenticazione
 
 1. L'utente autenticato sul **Server** clicca su un link verso un'app client (`/center-auth/redirect/{client}?page=/dashboard`) oppure un controller chiama `CenterAuth::redirectToClient(...)`.
-2. Il **Server** firma un JWT (`RS256`) con `iss`, `sub`, `aud`, `iat`, `nbf`, `exp`, `jti`, `page` e i dati minimi dell'utente, lo salva in cache dietro un **`code` monouso** (64 char hex, chiave cache hashata SHA-256) e reindirizza al callback del client (`?code=...`).
+2. Il **Server** prepara il payload (`iss`, `sub`, `aud`, `page` e i dati minimi dell'utente), lo salva in cache dietro un **`code` monouso** (64 char hex, chiave cache hashata SHA-256) e reindirizza al callback del client (`?code=...`).
    - Se la richiesta arriva da **Inertia**, utilizza automaticamente `Inertia::location(...)`.
 3. Il **Client** riceve `GET /center-auth/callback?code=...` ed esegue una chiamata server-to-server `POST /center-auth/exchange` autenticandosi con `X-Center-Auth-Client-Id` e `X-Center-Auth-Client-Secret`.
-4. Il **Server** verifica le credenziali del client, consuma il codice in modo atomico (`Cache::pull`), controlla che il codice appartenga a quel client e restituisce il JWT.
+4. Il **Server** verifica le credenziali del client, consuma il codice in modo atomico (lock non-bloccante su `LockProvider` + `Cache::pull`), controlla che il codice appartenga a quel client e firma il JWT (`RS256` con `iat`, `nbf`, `exp`, `jti`) al momento dello scambio.
 5. Il **Client** verifica firma RS256, `exp`, `iss` e `aud`, sincronizza l'utente locale (senza sovrascrivere la password esistente e senza password hardcoded), effettua il login rigenerando la sessione e reindirizza al path relativo sanificato (`page`).
 
 ---
@@ -110,6 +110,8 @@ CENTER_AUTH_CLIENT_DRIVER=database
 # Abilita il pannello web di gestione app collegate (/center-auth/admin)
 CENTER_AUTH_PANEL_ENABLED=true
 CENTER_AUTH_PANEL_PREFIX=center-auth/admin
+# Opzionale: nome di un Laravel Gate per autorizzare l'accesso al pannello
+# CENTER_AUTH_PANEL_GATE=manage-center-auth
 CENTER_AUTH_SECRET_GRACE_HOURS=24
 ```
 
@@ -120,7 +122,7 @@ php artisan vendor:publish --tag=center-auth-migrations
 php artisan migrate
 ```
 
-Puoi limitare l'accesso al pannello nel tuo `AppServiceProvider::boot()` (oltre ai middleware in `config/center-auth.php`):
+Per sicurezza il pannello è **chiuso di default (`403 Forbidden`) fuori dall'ambiente `local`**. In produzione/staging autorizza l'accesso impostando `CENTER_AUTH_PANEL_GATE` oppure registrando un callback nel tuo `AppServiceProvider::boot()` (oltre ai middleware in `config/center-auth.php`):
 
 ```php
 use CenterAuth\Facades\CenterAuth;
@@ -183,7 +185,9 @@ return CenterAuth::redirectToClient(
 CENTER_AUTH_MODE=client
 CENTER_AUTH_CLIENT_ID=app-alpha
 CENTER_AUTH_CLIENT_SECRET=il-tuo-secret-condiviso
+# Obbligatorio: usato per verificare il claim "iss" dei JWT ricevuti
 CENTER_AUTH_SERVER_URL=https://auth.example.com
+# Opzionale: URL interno per le chiamate back-channel POST /exchange (default: CENTER_AUTH_SERVER_URL)
 CENTER_AUTH_SERVER_API_URL=https://auth-internal.example.com
 CENTER_AUTH_FALLBACK_URL=https://auth.example.com
 CENTER_AUTH_VERIFY_SSL=true

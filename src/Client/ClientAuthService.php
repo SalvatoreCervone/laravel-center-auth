@@ -60,7 +60,8 @@ class ClientAuthService
         }
 
         $timeout = max(1, (int) config('center-auth.client.http_timeout', 10));
-        $exchangeUrl = "{$apiBaseUrl}/{$prefix}/exchange";
+        $exchangePath = $prefix !== '' ? "/{$prefix}/exchange" : '/exchange';
+        $exchangeUrl = $apiBaseUrl . $exchangePath;
 
         try {
             $response = Http::withOptions($options)
@@ -114,12 +115,7 @@ class ClientAuthService
             throw new InvalidTokenException('JWT audience (aud) does not match this client.');
         }
 
-        $expectedIssuer = rtrim((string) config('center-auth.client.server_url', ''), '/');
-        $actualIssuer = rtrim((string) ($claims['iss'] ?? ''), '/');
-
-        if ($expectedIssuer !== '' && ($actualIssuer === '' || ! hash_equals($expectedIssuer, $actualIssuer))) {
-            throw new InvalidTokenException('JWT issuer (iss) does not match configured server_url.');
-        }
+        $actualIssuer = $this->verifyIssuer($claims);
 
         $sub = (string) ($claims['sub'] ?? '');
         $userData = is_array($claims['user'] ?? null) ? $claims['user'] : [];
@@ -170,12 +166,7 @@ class ClientAuthService
 
         $claims = json_decode(json_encode($decoded, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
 
-        $expectedIssuer = rtrim((string) config('center-auth.client.server_url', ''), '/');
-        $actualIssuer = rtrim((string) ($claims['iss'] ?? ''), '/');
-
-        if ($expectedIssuer !== '' && ($actualIssuer === '' || ! hash_equals($expectedIssuer, $actualIssuer))) {
-            throw new InvalidTokenException('JWT issuer (iss) does not match configured server_url.');
-        }
+        $this->verifyIssuer($claims);
 
         $actualAudience = isset($claims['aud']) ? (string) $claims['aud'] : '';
         $expectedClientId = (string) config('center-auth.client.client_id', '');
@@ -188,7 +179,35 @@ class ClientAuthService
             throw new InvalidTokenException('JWT audience (aud) does not match this client.');
         }
 
-        return is_array($claims['data'] ?? null) ? $claims['data'] : $claims;
+        if (! isset($claims['data']) || ! is_array($claims['data']) || isset($claims['user'])) {
+            throw new InvalidTokenException('JWT payload is missing required data claim.');
+        }
+
+        return $claims['data'];
+    }
+
+    /**
+     * Validate the JWT issuer (iss) against the configured server_url.
+     *
+     * @param  array<string, mixed>  $claims
+     */
+    private function verifyIssuer(array $claims): string
+    {
+        $expectedIssuer = rtrim((string) config('center-auth.client.server_url', ''), '/');
+
+        if ($expectedIssuer === '') {
+            throw new InvalidConfigurationException(
+                'CenterAuth client server_url (center-auth.client.server_url) is not configured.'
+            );
+        }
+
+        $actualIssuer = rtrim((string) ($claims['iss'] ?? ''), '/');
+
+        if ($actualIssuer === '' || ! hash_equals($expectedIssuer, $actualIssuer)) {
+            throw new InvalidTokenException('JWT issuer (iss) does not match configured server_url.');
+        }
+
+        return $actualIssuer;
     }
 
     /**

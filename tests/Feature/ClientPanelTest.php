@@ -6,7 +6,9 @@ use CenterAuth\Facades\CenterAuth;
 use CenterAuth\Models\CenterAuthClient;
 use CenterAuth\Tests\Fixtures\User;
 use CenterAuth\Tests\TestCase;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 
 class ClientPanelTest extends TestCase
 {
@@ -47,9 +49,50 @@ class ClientPanelTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_panel_is_forbidden_by_default_in_non_local_environment(): void
+    {
+        $admin = $this->createAdminUser();
+
+        $this->actingAs($admin)
+            ->get('/center-auth/admin')
+            ->assertForbidden();
+    }
+
+    public function test_panel_is_accessible_by_default_in_local_environment(): void
+    {
+        $admin = $this->createAdminUser();
+        $this->app['env'] = 'local';
+
+        $this->actingAs($admin)
+            ->get('/center-auth/admin')
+            ->assertOk();
+    }
+
+    public function test_panel_respects_configured_gate(): void
+    {
+        $admin = $this->createAdminUser();
+        $regularUser = User::create([
+            'name' => 'Regular User',
+            'email' => 'user@example.com',
+            'password' => Hash::make('secret'),
+        ]);
+
+        config()->set('center-auth.server.panel.gate', 'manage-center-auth');
+        Gate::define('manage-center-auth', fn (User $user): bool => $user->email === 'admin@example.com');
+
+        $this->actingAs($admin)
+            ->get('/center-auth/admin')
+            ->assertOk();
+
+        $this->actingAs($regularUser)
+            ->get('/center-auth/admin')
+            ->assertForbidden();
+    }
+
     public function test_can_create_client_via_panel_and_use_it_for_sso_exchange(): void
     {
         $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
 
         $response = $this->actingAs($admin)
             ->post('/center-auth/admin/clients', [
@@ -90,6 +133,7 @@ class ClientPanelTest extends TestCase
     public function test_can_edit_client_parameters_via_panel(): void
     {
         $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
 
         $client = CenterAuthClient::create([
             'name' => 'App Vecchia',
@@ -126,6 +170,7 @@ class ClientPanelTest extends TestCase
     public function test_toggling_client_immediately_blocks_and_restores_sso_access(): void
     {
         $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
         $plainSecret = CenterAuthClient::generateSecret();
 
         $client = CenterAuthClient::create([
@@ -177,6 +222,7 @@ class ClientPanelTest extends TestCase
     public function test_secret_rotation_supports_grace_window_and_immediate_revocation(): void
     {
         $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
         $oldSecret = CenterAuthClient::generateSecret();
 
         $client = CenterAuthClient::create([
@@ -235,6 +281,7 @@ class ClientPanelTest extends TestCase
     public function test_can_delete_client_via_panel(): void
     {
         $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
 
         $client = CenterAuthClient::create([
             'name' => 'App Da Eliminare',
@@ -249,5 +296,47 @@ class ClientPanelTest extends TestCase
             ->assertRedirect('/center-auth/admin');
 
         $this->assertDatabaseMissing('center_auth_clients', ['id' => $client->id]);
+    }
+
+    public function test_confirm_dialogs_safely_escape_special_characters_and_newlines(): void
+    {
+        $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
+
+        $client = CenterAuthClient::create([
+            'name' => "App \"Test\" 'O'Reilly'\nLine2",
+            'client_id' => 'app-special',
+            'callback_url' => 'https://special.test/center-auth/callback',
+            'is_active' => true,
+            'secret_hash' => Hash::make('secret'),
+        ]);
+
+        $this->actingAs($admin)
+            ->get('/center-auth/admin')
+            ->assertOk()
+            ->assertSee('onsubmit="return confirm(this.dataset.confirm);"', false)
+            ->assertSee("data-confirm=\"Eliminare definitivamente l'applicazione App &quot;Test&quot; &#039;O&#039;Reilly&#039;\nLine2?\"", false)
+            ->assertDontSee('App "Test"', false);
+
+        $this->actingAs($admin)
+            ->get("/center-auth/admin/clients/{$client->id}/edit")
+            ->assertOk()
+            ->assertSee('onsubmit="return confirm(this.dataset.confirm);"', false)
+            ->assertSee("data-confirm=\"Generare un nuovo secret per App &quot;Test&quot; &#039;O&#039;Reilly&#039;\nLine2?\"", false)
+            ->assertDontSee('App "Test"', false);
+    }
+
+    public function test_panel_index_shows_warning_banner_when_config_driver_has_no_table(): void
+    {
+        $admin = $this->createAdminUser();
+        CenterAuth::authorizePanelUsing(fn () => true);
+
+        config()->set('center-auth.server.client_driver', 'config');
+        Schema::dropIfExists('center_auth_clients');
+
+        $this->actingAs($admin)
+            ->get('/center-auth/admin')
+            ->assertOk()
+            ->assertSee('CENTER_AUTH_CLIENT_DRIVER=database');
     }
 }

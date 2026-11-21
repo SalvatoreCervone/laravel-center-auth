@@ -38,6 +38,8 @@ class GenerateKeysCommandTest extends TestCase
 
         $this->assertFileExists($privatePath);
         $this->assertFileExists($publicPath);
+        clearstatcache(true, $privatePath);
+        $this->assertSame('0600', substr(sprintf('%o', fileperms($privatePath)), -4));
 
         // Verify generated keypair works with RS256 JWT signing & verification
         $privateKey = file_get_contents($privatePath);
@@ -52,12 +54,16 @@ class GenerateKeysCommandTest extends TestCase
             '--public' => $publicPath,
         ])->assertFailed();
 
-        // With --force it succeeds
+        // With --force it succeeds and enforces 0600 even on an existing looser file
+        chmod($privatePath, 0644);
         $this->artisan('center-auth:keys', [
             '--private' => $privatePath,
             '--public' => $publicPath,
             '--force' => true,
         ])->assertSuccessful();
+
+        clearstatcache(true, $privatePath);
+        $this->assertSame('0600', substr(sprintf('%o', fileperms($privatePath)), -4));
     }
 
     public function test_rejects_key_size_smaller_than_2048_bits(): void
@@ -66,6 +72,17 @@ class GenerateKeysCommandTest extends TestCase
             '--bits' => 1024,
             '--private' => $this->tempDir . '/private.key',
             '--public' => $this->tempDir . '/public.key',
+        ])->assertFailed();
+    }
+
+    public function test_fails_cleanly_when_target_path_is_not_writable(): void
+    {
+        mkdir($this->tempDir, 0755, true);
+
+        $this->artisan('center-auth:keys', [
+            '--private' => $this->tempDir,
+            '--public' => $this->tempDir . '/public.key',
+            '--force' => true,
         ])->assertFailed();
     }
 }

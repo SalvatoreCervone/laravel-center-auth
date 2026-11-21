@@ -98,7 +98,8 @@
             @endif
 
             <form method="POST" action="{{ route('center-auth.panel.clients.rotate-secret', $client) }}"
-                  onsubmit="return confirm('Generare un nuovo secret per {{ addslashes($client->name) }}?');"
+                  data-confirm="Generare un nuovo secret per {{ $client->name }}?"
+                  onsubmit="return confirm(this.dataset.confirm);"
                   style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:0.75rem;">
                 @csrf
                 <div class="form-group" style="margin-bottom:0; max-width:220px;">

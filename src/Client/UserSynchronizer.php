@@ -6,6 +6,7 @@ use CenterAuth\Data\AuthPayload;
 use CenterAuth\Exceptions\InvalidConfigurationException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Hash;
 
 class UserSynchronizer
@@ -36,7 +37,18 @@ class UserSynchronizer
                 'name' => $payload->name !== '' ? $payload->name : $payload->email,
                 'password' => Hash::make(bin2hex(random_bytes(20))),
             ]);
-            $user->save();
+            try {
+                $user->save();
+            } catch (QueryException $e) {
+                /** @var Model&Authenticatable|null $existing */
+                $existing = $modelClass::query()->where('email', $payload->email)->first();
+
+                if ($existing !== null) {
+                    return $existing;
+                }
+
+                throw $e;
+            }
 
             return $user;
         }

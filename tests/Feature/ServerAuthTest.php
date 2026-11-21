@@ -9,6 +9,9 @@ use CenterAuth\Tests\Fixtures\User;
 use CenterAuth\Tests\TestCase;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 
@@ -186,5 +189,99 @@ class ServerAuthTest extends TestCase
         $this->assertSame('/', $decoded->page);
         $this->assertTrue($decoded->custom_flag);
         $this->assertSame('IT-app-alpha', $decoded->user->department);
+    }
+
+    public function test_jwt_is_signed_at_exchange_time_with_fresh_jwt_ttl(): void
+    {
+        config()->set('center-auth.server.code_ttl', 120);
+        config()->set('center-auth.server.jwt_ttl', 10);
+
+        $user = User::create([
+            'name' => 'Mario Rossi',
+            'email' => 'mario@example.com',
+            'password' => Hash::make('secret'),
+        ]);
+
+        try {
+            $issuedAt = Carbon::now();
+            Carbon::setTestNow($issuedAt);
+
+            $code = CenterAuth::server()->issueCode('app-alpha', $user, '/dashboard');
+
+            // Advance 30s (past jwt_ttl=10s, still within code_ttl=120s)
+            $exchangedAt = $issuedAt->copy()->addSeconds(30);
+            Carbon::setTestNow($exchangedAt);
+            JWT::$timestamp = $exchangedAt->getTimestamp();
+
+            $response = $this->withHeaders([
+                'X-Center-Auth-Client-Id' => 'app-alpha',
+                'X-Center-Auth-Client-Secret' => 'alpha-secret-123',
+            ])->postJson('/center-auth/exchange', [
+                'code' => $code,
+            ]);
+
+            $response->assertOk();
+
+            $decoded = JWT::decode($response->json('jwt'), new Key(self::$testPublicKey, 'RS256'));
+
+            $this->assertSame($exchangedAt->getTimestamp(), $decoded->iat);
+            $this->assertSame($exchangedAt->getTimestamp(), $decoded->nbf);
+            $this->assertSame($exchangedAt->getTimestamp() + 10, $decoded->exp);
+        } finally {
+            Carbon::setTestNow();
+            JWT::$timestamp = null;
+        }
+    }
+
+    public function test_exchange_fails_immediately_when_code_lock_is_already_held(): void
+    {
+        $user = User::create([
+            'name' => 'Mario Rossi',
+            'email' => 'mario@example.com',
+            'password' => Hash::make('secret'),
+        ]);
+
+        $code = CenterAuth::server()->issueCode('app-alpha', $user, '/');
+
+        $store = Cache::store()->getStore();
+        $this->assertInstanceOf(LockProvider::class, $store);
+
+        $lock = $store->lock('center_auth_code_' . hash('sha256', $code) . ':lock', 5);
+        $this->assertTrue($lock->get());
+
+        try {
+            $this->withHeaders([
+                'X-Center-Auth-Client-Id' => 'app-alpha',
+                'X-Center-Auth-Client-Secret' => 'alpha-secret-123',
+            ])->postJson('/center-auth/exchange', [
+                'code' => $code,
+            ])->assertStatus(400);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_extra_claims_cannot_inject_data_or_overwrite_user_and_page_claims(): void
+    {
+        $user = User::create([
+            'name' => 'Mario Rossi',
+            'email' => 'mario@example.com',
+            'password' => Hash::make('secret'),
+        ]);
+
+        $code = CenterAuth::server()->issueCode('app-alpha', $user, '/dashboard', [
+            'data' => ['roles' => ['admin']],
+            'user' => ['email' => 'attacker@evil.com'],
+            'page' => '/admin',
+            'tenant' => 'acme',
+        ]);
+
+        $jwt = CenterAuth::server()->exchangeCode($code, 'app-alpha', 'alpha-secret-123');
+        $decoded = JWT::decode($jwt, new Key(self::$testPublicKey, 'RS256'));
+
+        $this->assertFalse(property_exists($decoded, 'data'));
+        $this->assertSame('mario@example.com', $decoded->user->email);
+        $this->assertSame('/dashboard', $decoded->page);
+        $this->assertSame('acme', $decoded->tenant);
     }
 }

@@ -59,13 +59,39 @@ class GenerateKeysCommand extends Command
 
         $publicKey = (string) $details['key'];
 
-        $this->ensureDirectoryExists(dirname($privatePath));
-        $this->ensureDirectoryExists(dirname($publicPath));
+        if (! $this->ensureDirectoryExists(dirname($privatePath))) {
+            $this->components->error('Failed to create directory for private key: ' . dirname($privatePath));
 
-        file_put_contents($privatePath, $privateKey);
+            return self::FAILURE;
+        }
+
+        if (! $this->ensureDirectoryExists(dirname($publicPath))) {
+            $this->components->error('Failed to create directory for public key: ' . dirname($publicPath));
+
+            return self::FAILURE;
+        }
+
+        $oldUmask = umask(0077);
+        try {
+            $written = @file_put_contents($privatePath, $privateKey);
+        } finally {
+            umask($oldUmask);
+        }
+
+        if ($written === false) {
+            $this->components->error("Failed to write private key to {$privatePath}.");
+
+            return self::FAILURE;
+        }
+
         @chmod($privatePath, 0600);
 
-        file_put_contents($publicPath, $publicKey);
+        if (@file_put_contents($publicPath, $publicKey) === false) {
+            $this->components->error("Failed to write public key to {$publicPath}.");
+
+            return self::FAILURE;
+        }
+
         @chmod($publicPath, 0644);
 
         $this->components->info('CenterAuth RSA keypair generated successfully.');
@@ -75,10 +101,14 @@ class GenerateKeysCommand extends Command
         return self::SUCCESS;
     }
 
-    private function ensureDirectoryExists(string $directory): void
+    private function ensureDirectoryExists(string $directory): bool
     {
-        if (! is_dir($directory)) {
-            mkdir($directory, 0755, true);
+        if (is_dir($directory)) {
+            return true;
         }
+
+        @mkdir($directory, 0755, true);
+
+        return is_dir($directory);
     }
 }
