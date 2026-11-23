@@ -98,16 +98,7 @@ class ClientAuthService
      */
     public function verifyJwt(string $jwt): AuthPayload
     {
-        $publicKey = $this->keyLoader->loadPublicKey();
-        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
-
-        try {
-            $decoded = JWT::decode($jwt, new Key($publicKey, $algorithm));
-        } catch (Throwable $e) {
-            throw new InvalidTokenException('Invalid or expired JWT: ' . $e->getMessage(), 0, $e);
-        }
-
-        $claims = json_decode(json_encode($decoded, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+        $claims = $this->decodeJwt($jwt);
 
         $expectedClientId = (string) config('center-auth.client.client_id', '');
         $actualAudience = (string) ($claims['aud'] ?? '');
@@ -156,16 +147,7 @@ class ClientAuthService
      */
     public function decodePayload(string $jwt, bool $requireAudience = false): array
     {
-        $publicKey = $this->keyLoader->loadPublicKey();
-        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
-
-        try {
-            $decoded = JWT::decode($jwt, new Key($publicKey, $algorithm));
-        } catch (Throwable $e) {
-            throw new InvalidTokenException('Invalid or expired JWT: ' . $e->getMessage(), 0, $e);
-        }
-
-        $claims = json_decode(json_encode($decoded, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+        $claims = $this->decodeJwt($jwt);
 
         $this->verifyIssuer($claims);
 
@@ -185,6 +167,31 @@ class ClientAuthService
         }
 
         return $claims['data'];
+    }
+
+    /**
+     * Decode and verify a JWT signature and time claims using the configured clock-skew leeway.
+     *
+     * @return array<string, mixed>
+     */
+    private function decodeJwt(string $jwt): array
+    {
+        $publicKey = $this->keyLoader->loadPublicKey();
+        $algorithm = (string) config('center-auth.keys.algorithm', 'RS256');
+        $leeway = max(0, (int) config('center-auth.client.jwt_leeway', 5));
+
+        $previousLeeway = JWT::$leeway;
+        JWT::$leeway = $leeway;
+
+        try {
+            $decoded = JWT::decode($jwt, new Key($publicKey, $algorithm));
+        } catch (Throwable $e) {
+            throw new InvalidTokenException('Invalid or expired JWT: ' . $e->getMessage(), 0, $e);
+        } finally {
+            JWT::$leeway = $previousLeeway;
+        }
+
+        return json_decode(json_encode($decoded, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
     }
 
     /**

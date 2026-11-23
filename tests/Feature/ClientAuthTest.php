@@ -440,4 +440,47 @@ class ClientAuthTest extends TestCase
         $this->expectException(InvalidConfigurationException::class);
         CenterAuth::client()->buildServerRedirectUrl('/dashboard');
     }
+
+    public function test_verify_jwt_respects_configured_clock_skew_leeway_and_restores_global_state(): void
+    {
+        $originalLeeway = JWT::$leeway;
+        config()->set('center-auth.client.jwt_leeway', 5);
+
+        // nbf 3 seconds in the future -> accepted within 5s leeway
+        $withinLeeway = JWT::encode([
+            'iss' => 'https://auth.test',
+            'sub' => '1',
+            'aud' => 'app-alpha',
+            'iat' => time() + 3,
+            'nbf' => time() + 3,
+            'exp' => time() + 60,
+            'jti' => 'jti-leeway-ok',
+            'page' => '/dashboard',
+            'user' => ['id' => 1, 'name' => 'Mario', 'email' => 'mario@example.com'],
+        ], self::$testPrivateKey, 'RS256');
+
+        $payload = CenterAuth::client()->verifyJwt($withinLeeway);
+        $this->assertSame('mario@example.com', $payload->email);
+        $this->assertSame($originalLeeway, JWT::$leeway);
+
+        // nbf 30 seconds in the future -> still rejected
+        $beyondLeeway = JWT::encode([
+            'iss' => 'https://auth.test',
+            'sub' => '1',
+            'aud' => 'app-alpha',
+            'iat' => time() + 30,
+            'nbf' => time() + 30,
+            'exp' => time() + 90,
+            'jti' => 'jti-leeway-fail',
+            'page' => '/dashboard',
+            'user' => ['id' => 1, 'name' => 'Mario', 'email' => 'mario@example.com'],
+        ], self::$testPrivateKey, 'RS256');
+
+        try {
+            $this->expectException(\CenterAuth\Exceptions\InvalidTokenException::class);
+            CenterAuth::client()->verifyJwt($beyondLeeway);
+        } finally {
+            $this->assertSame($originalLeeway, JWT::$leeway);
+        }
+    }
 }

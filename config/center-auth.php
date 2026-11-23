@@ -124,6 +124,9 @@ return [
         'http_timeout' => (int) env('CENTER_AUTH_HTTP_TIMEOUT', 10),
         'http_proxy' => env('CENTER_AUTH_HTTP_PROXY'),
 
+        // Clock skew tolerance in seconds when verifying JWT nbf/iat/exp claims.
+        'jwt_leeway' => (int) env('CENTER_AUTH_JWT_LEEWAY', 5),
+
         // Default relative path to redirect to after successful login.
         'default_redirect' => env('CENTER_AUTH_DEFAULT_REDIRECT', '/'),
 
