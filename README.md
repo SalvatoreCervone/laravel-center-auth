@@ -191,6 +191,8 @@ CENTER_AUTH_SERVER_URL=https://auth.example.com
 CENTER_AUTH_SERVER_API_URL=https://auth-internal.example.com
 CENTER_AUTH_FALLBACK_URL=https://auth.example.com
 CENTER_AUTH_VERIFY_SSL=true
+# Opzionale: tolleranza in secondi per piccoli sfasamenti di orologio tra Server e Client (default: 5)
+CENTER_AUTH_JWT_LEEWAY=5
 ```
 
 Il package registra automaticamente la rotta:
