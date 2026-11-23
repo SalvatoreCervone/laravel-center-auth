@@ -247,6 +247,80 @@ Se preferisci lasciare `->middleware('auth')` sulle rotte del Client:
 
 > **Nota lato Server:** assicurati che il controller di login del Server termini con `redirect()->intended(...)` (comportamento predefinito di Laravel Breeze, Jetstream e Fortify), così dopo il login riprende automaticamente `/center-auth/redirect/{client}?page=...`.
 
+#### Rotta `/login` lato Client (opzionale ma consigliata)
+
+Se il Client non ha una pagina di login locale (es. `route('login')` mancante o link diretti a `/login`), puoi definirla in `routes/web.php` per inoltrare al Server SSO preservando sia `url.intended` (salvato dal middleware `auth`) sia un eventuale `?page=...`:
+
+```php
+use CenterAuth\Facades\CenterAuth;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/login', function (Request $request) {
+    $default = config('center-auth.client.default_redirect', '/');
+
+    if ($request->user()) {
+        return redirect()->to($default);
+    }
+
+    $intended = $request->session()->pull('url.intended');
+
+    if (is_string($intended) && $intended !== '') {
+        $path = parse_url($intended, PHP_URL_PATH) ?: '/';
+        $query = parse_url($intended, PHP_URL_QUERY);
+        $targetPage = $query ? "{$path}?{$query}" : $path;
+    } else {
+        $targetPage = (string) ($request->query('page') ?: $default);
+    }
+
+    return CenterAuth::redirectToServer($targetPage, $request);
+})->name('login');
+```
+
+#### Esempio con Laravel + Vue SPA (Vue Router con catch-all)
+
+Se le rotte di pagina sono gestite da **Vue Router** e in `routes/web.php` hai una rotta catch-all:
+
+```php
+use CenterAuth\Facades\CenterAuth;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/login', function (Request $request) {
+    $default = config('center-auth.client.default_redirect', '/');
+
+    if ($request->user()) {
+        return redirect()->to($default);
+    }
+
+    $targetPage = (string) ($request->query('page') ?: $default);
+
+    return CenterAuth::redirectToServer($targetPage, $request);
+})->name('login');
+
+// Proteggi la catch-all escludendo /center-auth/* e /api/*
+Route::get('/{any}', fn () => view('app'))
+    ->where('any', '^(?!center-auth|api).*$')
+    ->middleware('center-auth');
+```
+
+E nel frontend Vue (es. interceptor Axios) gestisci l'eventuale scadenza sessione (`401`) sulle chiamate `/api/*` con un redirect full-page del browser (i redirect SSO cross-domain non vanno eseguiti via XHR):
+
+```js
+axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            const currentPath = window.location.pathname + window.location.search;
+            window.location.href = '/login?page=' + encodeURIComponent(currentPath);
+        }
+        return Promise.reject(error);
+    }
+);
+```
+
+> **Laravel + Inertia + Vue:** non serve alcun interceptor aggiuntivo — [`ClientAuthService::redirectToServer()`](src/Client/ClientAuthService.php) rileva automaticamente l'header `X-Inertia` e risponde con `Inertia::location(...)`, forzando una navigazione full-page verso il Server SSO.
+
 ---
 
 ## Estensibilità (ruoli, permessi e hook applicativi)
