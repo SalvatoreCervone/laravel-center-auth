@@ -198,6 +198,55 @@ Il package registra automaticamente la rotta:
 GET /center-auth/callback
 ```
 
+### Proteggere le rotte del Client con SSO verso il Server (SP-initiated)
+
+Quando un utente non autenticato apre direttamente un URL del Client (es. `/pagina-x?tab=dettagli`), il Client lo reindirizza automaticamente al Server (`/center-auth/redirect/{client_id}?page=/pagina-x?tab=dettagli`), il Server gestisce il login (o lo salta se la sessione è già attiva) e rimanda l'utente esattamente sulla pagina richiesta.
+
+Puoi configurarlo in **due modi**:
+
+#### Opzione A — Usando il middleware `center-auth` del package (consigliata)
+
+```php
+Route::middleware(['web', 'center-auth'])->group(function () {
+    Route::get('/pagina-x', [PaginaController::class, 'show']);
+});
+
+// Con guard specifico (opzionale, altrimenti usa center-auth.client.guard o il default):
+Route::middleware(['web', 'center-auth:admin'])->get('/admin', ...);
+```
+
+*(Supporta automaticamente anche visite **Inertia** via `Inertia::location(...)` e risponde `401 JSON` alle richieste API.)*
+
+#### Opzione B — Continuando a usare il middleware standard `auth` di Laravel
+
+Se preferisci lasciare `->middleware('auth')` sulle rotte del Client:
+
+- **Laravel 11 / 12** (`bootstrap/app.php`):
+  ```php
+  use CenterAuth\Facades\CenterAuth;
+  use Illuminate\Http\Request;
+
+  ->withMiddleware(function (Middleware $middleware) {
+      $middleware->redirectGuestsTo(fn (Request $request) =>
+          CenterAuth::client()->buildServerRedirectUrl(request: $request)
+      );
+  })
+  ```
+- **Laravel 10** (`app/Http/Middleware/Authenticate.php`):
+  ```php
+  use CenterAuth\Facades\CenterAuth;
+  use Illuminate\Http\Request;
+
+  protected function redirectTo(Request $request): ?string
+  {
+      return $request->expectsJson()
+          ? null
+          : CenterAuth::client()->buildServerRedirectUrl(request: $request);
+  }
+  ```
+
+> **Nota lato Server:** assicurati che il controller di login del Server termini con `redirect()->intended(...)` (comportamento predefinito di Laravel Breeze, Jetstream e Fortify), così dopo il login riprende automaticamente `/center-auth/redirect/{client}?page=...`.
+
 ---
 
 ## Estensibilità (ruoli, permessi e hook applicativi)

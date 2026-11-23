@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 class ClientAuthService
@@ -285,5 +286,50 @@ class ClientAuthService
         $serverUrl = (string) config('center-auth.client.server_url', '');
 
         return $serverUrl !== '' ? $serverUrl : '/';
+    }
+
+    /**
+     * Build the central auth server's /redirect/{client} URL with the requested target page.
+     * When $targetPage is omitted and a GET/HEAD $request is provided, its URI is used.
+     */
+    public function buildServerRedirectUrl(?string $targetPage = null, ?Request $request = null): string
+    {
+        $clientId = trim((string) config('center-auth.client.client_id', ''));
+        $serverUrl = rtrim((string) config('center-auth.client.server_url', ''), '/');
+        $prefix = trim((string) config('center-auth.route_prefix', 'center-auth'), '/');
+
+        if ($clientId === '' || $serverUrl === '') {
+            throw new InvalidConfigurationException(
+                'CenterAuth client requires client_id and server_url.'
+            );
+        }
+
+        $defaultRedirect = (string) config('center-auth.client.default_redirect', '/');
+
+        if ($targetPage === null && $request !== null && ($request->isMethod('GET') || $request->isMethod('HEAD'))) {
+            $targetPage = $request->getRequestUri();
+        }
+
+        $sanitizedPage = PathSanitizer::sanitize($targetPage, $defaultRedirect);
+        $redirectPath = $prefix !== '' ? "/{$prefix}/redirect/" : '/redirect/';
+
+        return $serverUrl . $redirectPath . rawurlencode($clientId) . '?' . http_build_query([
+            'page' => $sanitizedPage,
+        ]);
+    }
+
+    /**
+     * Redirect an unauthenticated client user to the central auth server for SSO login.
+     * Supports Inertia full-page redirects automatically when the request is an Inertia visit.
+     */
+    public function redirectToServer(?string $targetPage = null, ?Request $request = null): Response
+    {
+        $url = $this->buildServerRedirectUrl($targetPage, $request);
+
+        if ($request?->header('X-Inertia') && class_exists(\Inertia\Inertia::class)) {
+            return \Inertia\Inertia::location($url);
+        }
+
+        return redirect()->away($url);
     }
 }

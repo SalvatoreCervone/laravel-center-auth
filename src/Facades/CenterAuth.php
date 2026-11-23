@@ -15,6 +15,7 @@ use Symfony\Component\HttpFoundation\Response;
  * @method static ServerAuthService server()
  * @method static ClientAuthService client()
  * @method static Response redirectToClient(string $clientId, Authenticatable $user, string $targetPage = '/', array $extraClaims = [], ?Request $request = null)
+ * @method static Response redirectToServer(?string $targetPage = null, ?Request $request = null)
  * @method static void resolveUserClaimsUsing(Closure $callback)
  * @method static void resolveUserUsing(Closure $callback)
  * @method static void beforeLoginUsing(Closure $callback)

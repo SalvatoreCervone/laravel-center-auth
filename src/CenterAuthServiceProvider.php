@@ -3,6 +3,7 @@
 namespace CenterAuth;
 
 use CenterAuth\Client\ClientAuthService;
+use CenterAuth\Client\Http\Middleware\AuthenticateWithCenterAuth;
 use CenterAuth\Client\UserSynchronizer;
 use CenterAuth\Console\GenerateKeysCommand;
 use CenterAuth\Contracts\ClientRepository;
@@ -10,6 +11,7 @@ use CenterAuth\Server\Repositories\ConfigClientRepository;
 use CenterAuth\Server\Repositories\DatabaseClientRepository;
 use CenterAuth\Server\ServerAuthService;
 use CenterAuth\Support\KeyLoader;
+use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 
 class CenterAuthServiceProvider extends ServiceProvider
@@ -77,6 +79,7 @@ class CenterAuthServiceProvider extends ServiceProvider
 
         if (in_array($mode, ['client', 'both'], true)) {
             $this->loadRoutesFrom(__DIR__ . '/../routes/client.php');
+            $this->app->make(Router::class)->aliasMiddleware('center-auth', AuthenticateWithCenterAuth::class);
         }
     }
 }

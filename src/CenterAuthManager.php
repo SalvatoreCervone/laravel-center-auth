@@ -54,6 +54,15 @@ class CenterAuthManager
     }
 
     /**
+     * Convenience helper on the client side to redirect an unauthenticated user
+     * to the central auth server while preserving the requested target page.
+     */
+    public function redirectToServer(?string $targetPage = null, ?Request $request = null): Response
+    {
+        return $this->client()->redirectToServer($targetPage, $request);
+    }
+
+    /**
      * Customize the user claims embedded in the server-issued JWT.
      * Signature: fn(Authenticatable $user, string $clientId): array
      */

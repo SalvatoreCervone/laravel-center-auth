@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 
 class ClientAuthTest extends TestCase
 {
@@ -375,5 +376,68 @@ class ClientAuthTest extends TestCase
         Http::assertSentCount(2);
         Http::assertSent(fn (HttpClientRequest $request) => $request->url() === 'https://auth.test/exchange');
         Http::assertNotSent(fn (HttpClientRequest $request) => str_contains($request->url(), '//exchange'));
+    }
+
+    public function test_center_auth_middleware_redirects_guest_to_server_with_requested_path_and_query(): void
+    {
+        Route::middleware(['web', 'center-auth'])
+            ->get('/orders/{id}', fn (string $id) => "order-{$id}");
+
+        $response = $this->get('/orders/42?tab=details&sort=asc');
+
+        $response->assertRedirect(
+            'https://auth.test/center-auth/redirect/app-alpha?page=' . urlencode('/orders/42?tab=details&sort=asc')
+        );
+    }
+
+    public function test_center_auth_middleware_allows_authenticated_user(): void
+    {
+        Route::middleware(['web', 'center-auth'])
+            ->get('/orders/42', fn () => 'secret-order');
+
+        $user = User::create([
+            'name' => 'Mario',
+            'email' => 'mario@example.com',
+            'password' => Hash::make('secret'),
+        ]);
+
+        $this->actingAs($user)
+            ->get('/orders/42')
+            ->assertOk()
+            ->assertSee('secret-order');
+    }
+
+    public function test_center_auth_middleware_uses_default_redirect_for_non_get_requests(): void
+    {
+        config()->set('center-auth.client.default_redirect', '/dashboard');
+
+        Route::middleware(['center-auth'])
+            ->post('/orders', fn () => 'created');
+
+        $this->post('/orders')
+            ->assertRedirect(
+                'https://auth.test/center-auth/redirect/app-alpha?page=' . urlencode('/dashboard')
+            );
+    }
+
+    public function test_center_auth_middleware_returns_401_for_json_requests(): void
+    {
+        Route::middleware(['center-auth'])
+            ->get('/api/orders', fn () => ['ok' => true]);
+
+        $this->getJson('/api/orders')
+            ->assertUnauthorized()
+            ->assertJson(['message' => 'Unauthenticated.']);
+    }
+
+    public function test_build_server_redirect_url_sanitizes_page_and_requires_configuration(): void
+    {
+        $url = CenterAuth::client()->buildServerRedirectUrl('https://evil.com/phish');
+        $this->assertSame('https://auth.test/center-auth/redirect/app-alpha?page=%2F', $url);
+
+        config()->set('center-auth.client.server_url', '');
+
+        $this->expectException(InvalidConfigurationException::class);
+        CenterAuth::client()->buildServerRedirectUrl('/dashboard');
     }
 }
