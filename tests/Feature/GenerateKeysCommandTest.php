@@ -21,6 +21,7 @@ class GenerateKeysCommandTest extends TestCase
     {
         @unlink($this->tempDir . '/private.key');
         @unlink($this->tempDir . '/public.key');
+        @unlink($this->tempDir . '/openssl.cnf');
         @rmdir($this->tempDir);
 
         parent::tearDown();
@@ -83,6 +84,37 @@ class GenerateKeysCommandTest extends TestCase
             '--private' => $this->tempDir,
             '--public' => $this->tempDir . '/public.key',
             '--force' => true,
+        ])->assertFailed();
+    }
+
+    public function test_generates_keypair_using_explicit_openssl_config(): void
+    {
+        mkdir($this->tempDir, 0755, true);
+        $opensslConfig = $this->tempDir . '/openssl.cnf';
+        file_put_contents(
+            $opensslConfig,
+            "HOME = .\n\n[req]\ndistinguished_name = req_distinguished_name\n\n[req_distinguished_name]\n"
+        );
+
+        $privatePath = $this->tempDir . '/private.key';
+        $publicPath = $this->tempDir . '/public.key';
+
+        $this->artisan('center-auth:keys', [
+            '--private' => $privatePath,
+            '--public' => $publicPath,
+            '--openssl-config' => $opensslConfig,
+        ])->assertSuccessful();
+
+        $this->assertFileExists($privatePath);
+        $this->assertFileExists($publicPath);
+    }
+
+    public function test_fails_when_explicit_openssl_config_does_not_exist(): void
+    {
+        $this->artisan('center-auth:keys', [
+            '--private' => $this->tempDir . '/private.key',
+            '--public' => $this->tempDir . '/public.key',
+            '--openssl-config' => $this->tempDir . '/missing-openssl.cnf',
         ])->assertFailed();
     }
 }

@@ -10,7 +10,8 @@ class GenerateKeysCommand extends Command
                             {--force : Overwrite existing key files}
                             {--bits=2048 : RSA key size in bits (minimum 2048)}
                             {--private= : Custom path for the private key}
-                            {--public= : Custom path for the public key}';
+                            {--public= : Custom path for the public key}
+                            {--openssl-config= : Optional path to openssl.cnf (useful on Windows)}';
 
     protected $description = 'Generate an RSA keypair (RS256) for CenterAuth server signing and client verification';
 
@@ -32,32 +33,36 @@ class GenerateKeysCommand extends Command
             return self::FAILURE;
         }
 
-        $resource = openssl_pkey_new([
-            'private_key_bits' => $bits,
-            'private_key_type' => OPENSSL_KEYTYPE_RSA,
-        ]);
+        $explicitConfig = $this->option('openssl-config');
+        if ($explicitConfig !== null && $explicitConfig !== '') {
+            $explicitConfig = (string) $explicitConfig;
+            if (! is_file($explicitConfig) || ! is_readable($explicitConfig)) {
+                $this->components->error("OpenSSL config file not found or not readable: {$explicitConfig}");
 
-        if ($resource === false) {
-            $this->components->error('Failed to generate RSA keypair via OpenSSL.');
+                return self::FAILURE;
+            }
+        } else {
+            $explicitConfig = null;
+        }
+
+        $generated = $this->generateKeypair($bits, $explicitConfig);
+
+        if (! isset($generated['private'], $generated['public'])) {
+            $this->components->error($generated['error'] ?? 'Failed to generate RSA keypair via OpenSSL.');
+
+            foreach ($generated['openssl_errors'] ?? [] as $opensslError) {
+                $this->line("  OpenSSL: {$opensslError}");
+            }
+
+            if ($explicitConfig === null) {
+                $this->line('  Hint: On Windows, you can pass --openssl-config="C:\\path\\to\\openssl.cnf" or set the OPENSSL_CONF environment variable.');
+            }
 
             return self::FAILURE;
         }
 
-        $privateKey = '';
-        if (! openssl_pkey_export($resource, $privateKey)) {
-            $this->components->error('Failed to export private key.');
-
-            return self::FAILURE;
-        }
-
-        $details = openssl_pkey_get_details($resource);
-        if (! is_array($details) || empty($details['key'])) {
-            $this->components->error('Failed to extract public key.');
-
-            return self::FAILURE;
-        }
-
-        $publicKey = (string) $details['key'];
+        $privateKey = $generated['private'];
+        $publicKey = $generated['public'];
 
         if (! $this->ensureDirectoryExists(dirname($privatePath))) {
             $this->components->error('Failed to create directory for private key: ' . dirname($privatePath));
@@ -99,6 +104,148 @@ class GenerateKeysCommand extends Command
         $this->line("  Public key  (CLIENTS):     {$publicPath}");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Generate and export an RSA keypair, falling back to auto-detected or minimal
+     * OpenSSL configuration files when PHP cannot locate openssl.cnf (common on Windows).
+     *
+     * @return array{private?: string, public?: string, error?: string, openssl_errors?: list<string>}
+     */
+    private function generateKeypair(int $bits, ?string $explicitConfig): array
+    {
+        $baseOptions = [
+            'private_key_bits' => $bits,
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+        ];
+
+        if ($explicitConfig !== null) {
+            return $this->attemptKeypairGeneration($baseOptions + ['config' => $explicitConfig]);
+        }
+
+        $result = $this->attemptKeypairGeneration($baseOptions);
+        if (isset($result['private'], $result['public'])) {
+            return $result;
+        }
+
+        foreach ($this->findSystemOpenSslConfigs() as $configPath) {
+            $fallback = $this->attemptKeypairGeneration($baseOptions + ['config' => $configPath]);
+            if (isset($fallback['private'], $fallback['public'])) {
+                return $fallback;
+            }
+        }
+
+        $tempConfig = $this->createTemporaryOpenSslConfig();
+        if ($tempConfig !== null) {
+            try {
+                $fallback = $this->attemptKeypairGeneration($baseOptions + ['config' => $tempConfig]);
+                if (isset($fallback['private'], $fallback['public'])) {
+                    return $fallback;
+                }
+            } finally {
+                @unlink($tempConfig);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @return array{private?: string, public?: string, error?: string, openssl_errors?: list<string>}
+     */
+    private function attemptKeypairGeneration(array $options): array
+    {
+        $this->drainOpenSslErrors();
+
+        $resource = @openssl_pkey_new($options);
+        if ($resource === false) {
+            return [
+                'error' => 'Failed to generate RSA keypair via OpenSSL.',
+                'openssl_errors' => $this->drainOpenSslErrors(),
+            ];
+        }
+
+        $privateKey = '';
+        if (! @openssl_pkey_export($resource, $privateKey, null, $options)) {
+            return [
+                'error' => 'Failed to export private key.',
+                'openssl_errors' => $this->drainOpenSslErrors(),
+            ];
+        }
+
+        $details = @openssl_pkey_get_details($resource);
+        if (! is_array($details) || empty($details['key'])) {
+            return [
+                'error' => 'Failed to extract public key.',
+                'openssl_errors' => $this->drainOpenSslErrors(),
+            ];
+        }
+
+        return [
+            'private' => $privateKey,
+            'public' => (string) $details['key'],
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function findSystemOpenSslConfigs(): array
+    {
+        $candidates = [];
+
+        $envConfig = getenv('OPENSSL_CONF');
+        if (is_string($envConfig) && $envConfig !== '') {
+            $candidates[] = $envConfig;
+        }
+
+        $phpDir = dirname(PHP_BINARY);
+        $sep = DIRECTORY_SEPARATOR;
+
+        $candidates[] = $phpDir . $sep . 'extras' . $sep . 'ssl' . $sep . 'openssl.cnf';
+        $candidates[] = $phpDir . $sep . 'openssl.cnf';
+        $candidates[] = $phpDir . $sep . '..' . $sep . 'apache' . $sep . 'conf' . $sep . 'openssl.cnf';
+        $candidates[] = $phpDir . $sep . '..' . $sep . 'etc' . $sep . 'ssl' . $sep . 'openssl.cnf';
+
+        $valid = [];
+        foreach (array_unique($candidates) as $path) {
+            if (is_file($path) && is_readable($path)) {
+                $valid[] = $path;
+            }
+        }
+
+        return $valid;
+    }
+
+    private function createTemporaryOpenSslConfig(): ?string
+    {
+        $path = @tempnam(sys_get_temp_dir(), 'center_auth_openssl_');
+        if ($path === false) {
+            return null;
+        }
+
+        $contents = "HOME = .\n\n[req]\ndistinguished_name = req_distinguished_name\n\n[req_distinguished_name]\n";
+        if (@file_put_contents($path, $contents) === false) {
+            @unlink($path);
+
+            return null;
+        }
+
+        return $path;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function drainOpenSslErrors(): array
+    {
+        $errors = [];
+        while (($error = openssl_error_string()) !== false) {
+            $errors[] = $error;
+        }
+
+        return $errors;
     }
 
     private function ensureDirectoryExists(string $directory): bool

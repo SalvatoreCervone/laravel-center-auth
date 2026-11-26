@@ -53,6 +53,7 @@ Opzioni disponibili:
 - `--bits=2048` (default `2048`, minimo `2048`; es. `--bits=4096`)
 - `--force` per sovrascrivere chiavi esistenti
 - `--private=/percorso/custom/private.key` e `--public=/percorso/custom/public.key`
+- `--openssl-config=/percorso/openssl.cnf` per specificare un file di configurazione OpenSSL personalizzato (utile su Windows se non vuoi usare il rilevamento/fallback automatico)
 
 Di default verranno creati:
 - `storage/center-auth/private.key` → **solo sul Server** (permessi `0600`)
